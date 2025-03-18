@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_tflite/flutter_tflite.dart';
-
+import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:flutter_spinkit/flutter_spinkit.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
+import 'package:image/image.dart' as img;
+import 'plant_data.dart';  // Importer les données des plantes
 
 class PredictionPage extends StatefulWidget {
   const PredictionPage({super.key});
@@ -11,7 +15,10 @@ class PredictionPage extends StatefulWidget {
 
 class _PredictionPageState extends State<PredictionPage> {
   String? _result;
+  String? _accuracy;
   bool _isProcessing = false;
+  final ImagePicker _picker = ImagePicker();
+  Interpreter? _interpreter;
 
   @override
   void initState() {
@@ -20,94 +27,101 @@ class _PredictionPageState extends State<PredictionPage> {
   }
 
   Future<void> _loadModel() async {
-    // Charger le modèle principal
-    String? res = await Tflite.loadModel(
-      model: "assets/model/plant_disease_model.tflite",
-      labels: "assets/model/labels.txt",
-    );
-    print("Modèle chargé: $res");
+    try {
+      _interpreter = await Interpreter.fromAsset("assets/models/trained_plant_disease_model.tflite");
+      print("Modèle chargé avec succès");
+    } catch (e) {
+      print("Erreur lors du chargement du modèle: $e");
+      _showDialog("Impossible de charger le modèle. Vérifiez son chemin et son format.");
+    }
   }
 
-  Future<bool> _isLeaf(String imagePath) async {
-    // Si un modèle de validation de feuille est disponible
-    var predictions = await Tflite.runModelOnImage(
-      path: imagePath,
-      imageMean: 0.0,
-      imageStd: 255.0,
-      numResults: 1, // Classe la plus probable
-      threshold: 0.5,
-    );
-
-    if (predictions != null && predictions.isNotEmpty) {
-      int index = predictions[0]['index'];
-      return index == 1; // Supposons que l'indice 1 correspond à "Feuille"
+  bool _isModelLoaded() {
+    if (_interpreter == null) {
+      _showDialog("Le modèle n'est pas chargé. Veuillez réessayer.");
+      return false;
     }
-    return false;
+    return true;
+  }
+
+  Future<List<List<List<List<double>>>>> _preprocessImage(String imagePath) async {
+    File imageFile = File(imagePath);
+    img.Image? image = img.decodeImage(await imageFile.readAsBytes());
+  
+    if (image == null) {
+      throw Exception("Impossible de charger l'image");
+    }
+
+    img.Image resizedImage = img.copyResize(image, width: 128, height: 128);
+
+    List<List<List<List<double>>>> inputBuffer = List.generate(1, (batch) => 
+        List.generate(128, (y) => 
+          List.generate(128, (x) => 
+            List.generate(3, (c) {
+              int pixel = resizedImage.getPixel(x, y);
+              if (c == 0) return (img.getRed(pixel) - 127.5) / 127.5;
+              if (c == 1) return (img.getGreen(pixel) - 127.5) / 127.5;
+              return (img.getBlue(pixel) - 127.5) / 127.5;
+            })
+          )
+        )
+      );
+  
+    return inputBuffer;
   }
 
   Future<void> _predict(String imagePath) async {
+  if (!_isModelLoaded()) return;
+
+  setState(() {
+    _isProcessing = true;
+    _result = null;
+    _accuracy = null;
+  });
+
+  try {
+    var input = await _preprocessImage(imagePath);
+    List<List<double>> output = List.generate(1, (index) => List.filled(39, 0));
+
+    _interpreter!.run(input, output);
+
+    int bestIndex = 0;
+    double bestConfidence = 0.0;
+    for (int i = 0; i < output[0].length; i++) {
+      if (output[0][i] > bestConfidence) {
+        bestConfidence = output[0][i];
+        bestIndex = i;
+      }
+    }
+
+    // Utiliser l'indice pour obtenir le nom de la plante à partir de plantNames
+    String plantName = classNames[bestIndex];
+
     setState(() {
-      _isProcessing = true;
-    });
-
-    // Vérifier si c'est une feuille
-    bool isLeaf = await _isLeaf(imagePath);
-    if (!isLeaf) {
-      _showDialog("L'image ne semble pas contenir une feuille.");
-      setState(() {
-        _isProcessing = false;
-      });
-      return;
-    }
-
-    // Faire la prédiction principale
-    var predictions = await Tflite.runModelOnImage(
-      path: imagePath,
-      imageMean: 0.0,
-      imageStd: 255.0,
-      numResults: 5,
-      threshold: 0.5,
-    );
-
-    if (predictions == null || predictions.isEmpty) {
-      _showDialog("Aucune prédiction trouvée.");
-      setState(() {
-        _isProcessing = false;
-      });
-      return;
-    }
-
-    // Vérifier le seuil de confiance
-    double maxConfidence = predictions.map((e) => e['confidence']).reduce((a, b) => a > b ? a : b);
-    if (maxConfidence < 0.6) {
-      _showDialog("Confiance faible. L'image n'est probablement pas une feuille ou contient trop de bruit.");
-      setState(() {
-        _isProcessing = false;
-      });
-      return;
-    }
-
-    // Récupérer la prédiction avec la plus haute confiance
-    var bestPrediction = predictions[0];
-    setState(() {
-      _result = "Résultat: ${bestPrediction['label']} (Confiance: ${(bestPrediction['confidence'] * 100).toStringAsFixed(2)}%)";
+      _result = "Résultat: $plantName";  // Afficher le nom de la plante
+      _accuracy = "Précision: ${(bestConfidence * 100).toStringAsFixed(2)}%";
       _isProcessing = false;
     });
+  } catch (e) {
+    setState(() {
+      _isProcessing = false;
+    });
+    _showDialog("Erreur lors de la prédiction: $e");
   }
+}
+
 
   void _showDialog(String message) {
     showDialog(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text("Attention"),
+          title: const Text("Attention"),
           content: Text(message),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: Text("OK"),
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text("OK"),
             ),
           ],
         );
@@ -117,34 +131,49 @@ class _PredictionPageState extends State<PredictionPage> {
 
   @override
   void dispose() {
-    Tflite.close();
+    _interpreter?.close();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text("Prédiction de maladies des plantes"),
-      ),
+      appBar: AppBar(title: const Text("Prédiction de maladies des plantes")),
       body: Center(
         child: _isProcessing
-            ? CircularProgressIndicator()
+            ? const SpinKitFadingCircle(color: Colors.green, size: 50.0)
             : Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    _result ?? "Chargez une image pour prédire",
-                    textAlign: TextAlign.center,
-                  ),
-                  SizedBox(height: 20),
+                  Text(_result ?? "Chargez une image pour prédire", textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  if (_accuracy != null)
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Text(_accuracy!, style: const TextStyle(fontSize: 16, color: Colors.blue)),
+                    ),
+                  const SizedBox(height: 20),
                   ElevatedButton(
                     onPressed: () async {
-                      // Implémentation pour charger une image
-                      String imagePath = "chemin/vers/votre/image.jpg"; // Remplacez avec le chemin de l'image
-                      await _predict(imagePath);
+                      final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
+                      if (pickedFile != null) {
+                        await _predict(pickedFile.path);
+                      } else {
+                        _showDialog("Aucune image sélectionnée.");
+                      }
                     },
-                    child: Text("Charger une image"),
+                    child: const Text("Charger une image"),
+                  ),
+                  const SizedBox(height: 10),
+                  ElevatedButton(
+                    onPressed: () async {
+                      final pickedFile = await _picker.pickImage(source: ImageSource.camera);
+                      if (pickedFile != null) {
+                        await _predict(pickedFile.path);
+                      } else {
+                        _showDialog("Aucune image capturée.");
+                      }
+                    },
+                    child: const Text("Prendre une photo"),
                   ),
                 ],
               ),

@@ -1,3 +1,18 @@
+// Configuration du buildscript (nécessaire pour les plugins de construction)
+buildscript {
+    repositories {
+        google() // Dépôt Google pour les dépendances Android
+        mavenCentral() // Dépôt Maven Central pour les autres dépendances
+    }
+    dependencies {
+        // Plugin Android Gradle (AGP)
+        classpath 'com.android.tools.build:gradle:8.3.0' // Version compatible avec Flutter
+        // Plugin Kotlin (si vous utilisez Kotlin)
+        // classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.0" // Version de Kotlin
+    }
+}
+
+// Configuration de tous les projets
 allprojects {
     repositories {
         google()
@@ -5,14 +20,15 @@ allprojects {
     }
 }
 
+// Configuration du répertoire de build
 rootProject.buildDir = "../build"
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
-}
-subprojects {
+    // Dépendance d'évaluation pour le module :app
     project.evaluationDependsOn(":app")
 }
 
+// Tâche pour nettoyer le répertoire de build
 tasks.register("clean", Delete) {
     delete rootProject.buildDir
 }

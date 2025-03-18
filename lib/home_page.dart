@@ -1,5 +1,6 @@
 // home_page.dart
 import 'package:flutter/material.dart';
+import 'package:flutter_spinkit/flutter_spinkit.dart'; // Import de flutter_spinkit
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -34,7 +35,6 @@ class HomePage extends StatelessWidget {
               title: Text('Settings'),
               onTap: () => Navigator.pushNamed(context, '/settings'),
             ),
-
           ],
         ),
       ),
@@ -42,11 +42,25 @@ class HomePage extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Image.asset('assets/images/home_page.jpg',
-            errorBuilder: (context, error, stackTrace) {
-              return const Text('Image introuvable.');
+            FutureBuilder(
+              future: precacheImage(AssetImage('assets/images/home_page.jpg'), context),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.done) {
+                  return Image.asset(
+                    'assets/images/home_page.jpg',
+                    height: 200,
+                    errorBuilder: (context, error, stackTrace) {
+                      return const Text('Image introuvable.');
+                    },
+                  );
+                } else {
+                  return SpinKitFadingCircle( // Affichage du loader
+                    color: Colors.blueAccent,
+                    size: 50.0,
+                  );
+                }
               },
-              height: 200),
+            ),
             SizedBox(height: 20),
             Text(
               'Welcome to the Plant Disease Detection App!',

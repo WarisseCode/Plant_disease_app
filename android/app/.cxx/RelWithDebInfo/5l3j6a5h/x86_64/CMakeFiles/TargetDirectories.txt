@@ -1,0 +1,2 @@
+C:/Users/HP/Warisse/plantdiseaseapp/android/app/.cxx/RelWithDebInfo/5l3j6a5h/x86_64/CMakeFiles/edit_cache.dir
+C:/Users/HP/Warisse/plantdiseaseapp/android/app/.cxx/RelWithDebInfo/5l3j6a5h/x86_64/CMakeFiles/rebuild_cache.dir
