@@ -4,7 +4,7 @@ import 'package:flutter_spinkit/flutter_spinkit.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'package:image/image.dart' as img;
-import 'plant_data.dart';  // Importer les données des plantes
+import 'plant_data.dart';
 
 class PredictionPage extends StatefulWidget {
   const PredictionPage({super.key});
@@ -17,6 +17,7 @@ class _PredictionPageState extends State<PredictionPage> {
   String? _result;
   String? _accuracy;
   bool _isProcessing = false;
+  File? _selectedImage;
   final ImagePicker _picker = ImagePicker();
   Interpreter? _interpreter;
 
@@ -44,72 +45,63 @@ class _PredictionPageState extends State<PredictionPage> {
     return true;
   }
 
-  Future<List<List<List<List<double>>>>> _preprocessImage(String imagePath) async {
-    File imageFile = File(imagePath);
-    img.Image? image = img.decodeImage(await imageFile.readAsBytes());
-  
-    if (image == null) {
-      throw Exception("Impossible de charger l'image");
+  Future<void> _selectImage(ImageSource source) async {
+    final pickedFile = await _picker.pickImage(source: source);
+    if (pickedFile != null) {
+      setState(() {
+        _selectedImage = File(pickedFile.path);
+      });
+      await _predict(pickedFile.path);
+    } else {
+      _showDialog("Aucune image sélectionnée.");
     }
-
-    img.Image resizedImage = img.copyResize(image, width: 128, height: 128);
-
-    List<List<List<List<double>>>> inputBuffer = List.generate(1, (batch) => 
-        List.generate(128, (y) => 
-          List.generate(128, (x) => 
-            List.generate(3, (c) {
-              int pixel = resizedImage.getPixel(x, y);
-              if (c == 0) return (img.getRed(pixel) - 127.5) / 127.5;
-              if (c == 1) return (img.getGreen(pixel) - 127.5) / 127.5;
-              return (img.getBlue(pixel) - 127.5) / 127.5;
-            })
-          )
-        )
-      );
-  
-    return inputBuffer;
   }
 
   Future<void> _predict(String imagePath) async {
-  if (!_isModelLoaded()) return;
+    if (!_isModelLoaded()) return;
 
-  setState(() {
-    _isProcessing = true;
-    _result = null;
-    _accuracy = null;
-  });
+    setState(() {
+      _isProcessing = true;
+      _result = null;
+      _accuracy = null;
+    });
 
-  try {
-    var input = await _preprocessImage(imagePath);
-    List<List<double>> output = List.generate(1, (index) => List.filled(39, 0));
+    try {
+      var input = await _preprocessImage(imagePath);
+      List<List<double>> output = List.generate(1, (index) => List.filled(39, 0));
+      _interpreter!.run(input, output);
 
-    _interpreter!.run(input, output);
-
-    int bestIndex = 0;
-    double bestConfidence = 0.0;
-    for (int i = 0; i < output[0].length; i++) {
-      if (output[0][i] > bestConfidence) {
-        bestConfidence = output[0][i];
-        bestIndex = i;
+      int bestIndex = 0;
+      double bestConfidence = 0.0;
+      for (int i = 0; i < output[0].length; i++) {
+        if (output[0][i] > bestConfidence) {
+          bestConfidence = output[0][i];
+          bestIndex = i;
+        }
       }
+
+      if (plantDiseaseData.containsKey(bestIndex)) {
+        PlantDiseaseInfo diseaseInfo = plantDiseaseData[bestIndex]!;
+        setState(() {
+          _result = "Maladie détectée : ${diseaseInfo.name}";
+          _accuracy = "Précision : ${(bestConfidence * 100).toStringAsFixed(2)}%\n"
+                      "Description : ${diseaseInfo.description}\n"
+                      "Solutions : ${diseaseInfo.solutions}";
+        });
+      } else {
+        setState(() {
+          _result = "Classe inconnue : $bestIndex";
+          _accuracy = "Précision : ${(bestConfidence * 100).toStringAsFixed(2)}%";
+        });
+      }
+    } catch (e) {
+      _showDialog("Erreur lors de la prédiction: $e");
+    } finally {
+      setState(() {
+        _isProcessing = false;
+      });
     }
-
-    // Utiliser l'indice pour obtenir le nom de la plante à partir de plantNames
-    String plantName = classNames[bestIndex];
-
-    setState(() {
-      _result = "Résultat: $plantName";  // Afficher le nom de la plante
-      _accuracy = "Précision: ${(bestConfidence * 100).toStringAsFixed(2)}%";
-      _isProcessing = false;
-    });
-  } catch (e) {
-    setState(() {
-      _isProcessing = false;
-    });
-    _showDialog("Erreur lors de la prédiction: $e");
   }
-}
-
 
   void _showDialog(String message) {
     showDialog(
@@ -130,53 +122,52 @@ class _PredictionPageState extends State<PredictionPage> {
   }
 
   @override
-  void dispose() {
-    _interpreter?.close();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("Prédiction de maladies des plantes")),
       body: Center(
-        child: _isProcessing
-            ? const SpinKitFadingCircle(color: Colors.green, size: 50.0)
-            : Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(_result ?? "Chargez une image pour prédire", textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  if (_accuracy != null)
-                    Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: Text(_accuracy!, style: const TextStyle(fontSize: 16, color: Colors.blue)),
-                    ),
-                  const SizedBox(height: 20),
-                  ElevatedButton(
-                    onPressed: () async {
-                      final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
-                      if (pickedFile != null) {
-                        await _predict(pickedFile.path);
-                      } else {
-                        _showDialog("Aucune image sélectionnée.");
-                      }
-                    },
-                    child: const Text("Charger une image"),
-                  ),
-                  const SizedBox(height: 10),
-                  ElevatedButton(
-                    onPressed: () async {
-                      final pickedFile = await _picker.pickImage(source: ImageSource.camera);
-                      if (pickedFile != null) {
-                        await _predict(pickedFile.path);
-                      } else {
-                        _showDialog("Aucune image capturée.");
-                      }
-                    },
-                    child: const Text("Prendre une photo"),
-                  ),
-                ],
-              ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (_selectedImage != null)
+              Image.file(_selectedImage!, height: 200),
+            const SizedBox(height: 10),
+            _isProcessing
+                ? const SpinKitFadingCircle(color: Colors.green, size: 50.0)
+                : _result != null
+                    ? Container(
+                        padding: const EdgeInsets.all(10),
+                        margin: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.green[100],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Column(
+                          children: [
+                            Text(_result!, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 5),
+                            Text(_accuracy ?? "", style: const TextStyle(fontSize: 16, color: Colors.blue)),
+                          ],
+                        ),
+                      )
+                    : const Text("Chargez une image pour prédire", style: TextStyle(fontSize: 18)),
+            const SizedBox(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.photo_library, size: 40, color: Colors.blue),
+                  onPressed: () => _selectImage(ImageSource.gallery),
+                ),
+                const SizedBox(width: 20),
+                IconButton(
+                  icon: const Icon(Icons.camera_alt, size: 40, color: Colors.green),
+                  onPressed: () => _selectImage(ImageSource.camera),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
